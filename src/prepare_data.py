@@ -14,6 +14,8 @@ CR_CAP = 4_000  # max Credit Reporting rows before normalization
 VAL_FRAC = 0.30   # first split: 70% train / 30% temp
 TEST_FRAC = 0.50  # second split of temp: 50% val / 50% test → 15%/15% overall
 
+COLS = ["Consumer complaint narrative", "Product", "Date received", "Company", "State"]
+
 _REDACTION = re.compile(r"X{2,}")   # CFPB redaction markers are uppercase XXXX
 _WHITESPACE = re.compile(r"\s+")
 
@@ -34,29 +36,19 @@ def print_distribution(series: pd.Series, label: str) -> None:
 
 
 def main() -> None:
-    # ── Step 1: Load CSV ──────────────────────────────────────────────────────
+    PROCESSED.mkdir(parents=True, exist_ok=True)
+
+    # ── Step 1: Load CSV in chunks, drop null narratives per-chunk ────────────
     print("Loading CSV …")
-    header_df = pd.read_csv(RAW_CSV, nrows=0)
-    all_cols = header_df.columns.tolist()
-    df = pd.read_csv(
-        RAW_CSV,
-        low_memory=False,
-        usecols=["Product", "Consumer complaint narrative"],
-    )
-    print(f"Shape: {len(df):,} rows x {len(all_cols)} columns")
-    print(f"Columns: {all_cols}")
+    chunks = []
+    for chunk in pd.read_csv(RAW_CSV, usecols=COLS, chunksize=100_000):
+        chunks.append(chunk.dropna(subset=["Consumer complaint narrative"]))
+    df = pd.concat(chunks, ignore_index=True)
+    print(f"After null-narrative filter: {len(df):,} rows x {len(df.columns)} columns")
+    print_distribution(df["Product"], "Product distribution (full filtered dataset)")
 
-    # ── Step 2: Filter null / blank narratives ────────────────────────────────
-    print("\nFiltering null narratives …")
-    mask = df["Consumer complaint narrative"].notna() & \
-           df["Consumer complaint narrative"].str.strip().ne("")
-    df = df[mask].copy()
-    total_filtered = len(df)
-    print(f"After narrative filter: {total_filtered:,} rows")
-
-    # ── Step 2b: Sample — cap Credit Reporting at CR_CAP, others proportional ─
+    # ── Step 2: Subsample to ~25K ─────────────────────────────────────────────
     print(f"\nSampling: Credit Reporting capped at {CR_CAP:,}, others proportional …")
-    print_distribution(df["Product"], "Product distribution BEFORE sampling")
 
     _CR_VARIANTS = {
         "Credit reporting or other personal consumer reports",
@@ -72,14 +64,27 @@ def main() -> None:
         .apply(lambda g: g.sample(frac=frac, random_state=SEED))
     )
     df = pd.concat([df_cr, df_other]).sample(frac=1, random_state=SEED).copy()
-    total_filtered = len(df)
-    print(f"\nSample size: {total_filtered:,} rows")
+    print(f"\nSample size: {len(df):,} rows")
     print_distribution(df["Product"], "Product distribution AFTER sampling")
-    PROCESSED.mkdir(parents=True, exist_ok=True)
     df.to_csv(PROCESSED / "sample_25k.csv", index=False)
     print(f"Saved sample to {PROCESSED / 'sample_25k.csv'}")
 
-    # ── Step 3b: Normalize product label variants to canonical names ─────────
+    # ── Step 3: Clean narrative text (subsample only) ─────────────────────────
+    print("\nCleaning narrative text …")
+    df["text"] = df["Consumer complaint narrative"].apply(clean_narrative)
+    empty_after = (df["text"].str.strip() == "").sum()
+    print(f"After cleaning: {len(df):,} rows")
+    print(f"  Fully-redacted (empty after cleaning): {empty_after:,} — dropping")
+    df = df[df["text"].str.strip() != ""].copy()
+    print(f"After dropping empty-after-cleaning rows: {len(df):,} rows")
+
+    # ── Step 3b: Deduplicate on text after cleaning ───────────────────────────
+    before_dedup = len(df)
+    df = df.drop_duplicates(subset="text").copy()
+    total_filtered = len(df)
+    print(f"After deduplication: {total_filtered:,} rows (dropped {before_dedup - total_filtered:,} duplicates)")
+
+    # ── Step 4: Normalize product label variants to canonical names ───────────
     _LABEL_NORMALIZATION = {
         "Credit reporting or other personal consumer reports": "Credit Reporting",
         "Credit reporting, credit repair services, or other personal consumer reports": "Credit Reporting",
@@ -101,7 +106,7 @@ def main() -> None:
     print("\nApplied label normalization.")
     print_distribution(df["Product"], "Product distribution AFTER normalization")
 
-    # ── Step 4: Consolidate sparse labels → "Other" ───────────────────────────
+    # ── Step 5: Consolidate sparse labels → "Other" ───────────────────────────
     print(f"\nConsolidating labels (threshold = {THRESHOLD:,}) …")
     counts = df["Product"].value_counts()
     small = set(counts[counts < THRESHOLD].index)
@@ -110,8 +115,7 @@ def main() -> None:
     df["label_name"] = df["Product"].apply(lambda x: "Other" if x in small else x)
     print_distribution(df["label_name"], "Product distribution AFTER consolidation")
 
-    # ── Step 5: Label encoder → label_map.json ────────────────────────────────
-    PROCESSED.mkdir(parents=True, exist_ok=True)
+    # ── Step 6: Label encoder → label_map.json ────────────────────────────────
     sorted_names = sorted(df["label_name"].unique())
     label_map = {name: idx for idx, name in enumerate(sorted_names)}
     map_path = PROCESSED / "label_map.json"
@@ -119,19 +123,6 @@ def main() -> None:
         json.dump(label_map, f, indent=2, ensure_ascii=False)
     print(f"\nSaved label_map.json → {len(label_map)} classes: {map_path}")
     df["label"] = df["label_name"].map(label_map).astype(int)
-
-    # ── Step 6: Clean narrative text ──────────────────────────────────────────
-    print("\nCleaning narrative text …")
-    df["text"] = df["Consumer complaint narrative"].apply(clean_narrative)
-    empty_after = (df["text"] == "").sum()
-    print(f"After cleaning: {len(df):,} rows")
-    print(f"  Fully-redacted (empty after cleaning): {empty_after:,}")
-
-    # ── Step 6b: Deduplicate on text after cleaning ───────────────────────────
-    before_dedup = len(df)
-    df = df.drop_duplicates(subset="text").copy()
-    total_filtered = len(df)  # update total for validation
-    print(f"After deduplication: {total_filtered:,} rows (dropped {before_dedup - total_filtered:,} duplicates)")
 
     # ── Step 7: Stratified 70 / 15 / 15 split ────────────────────────────────
     print("\nSplitting data (70 / 15 / 15, stratified) …")
@@ -186,6 +177,11 @@ def main() -> None:
         n_null = split_df["text"].isna().sum()
         assert n_null == 0, f"{split_name} has {n_null:,} null text values"
         print(f"Zero null text in {split_name} — OK")
+
+    for split_name, split_df in [("Train", train), ("Val", val), ("Test", test)]:
+        n_empty = (split_df["text"].str.strip() == "").sum()
+        assert n_empty == 0, f"{split_name} has {n_empty:,} empty-after-cleaning text rows"
+        print(f"Empty-text rows: {n_empty} — OK")
 
     print("\nAll validation checks passed.")
 

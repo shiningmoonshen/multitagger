@@ -1,0 +1,12 @@
+{
+  "Bank Account": 0,
+  "Credit Card": 1,
+  "Credit Reporting": 2,
+  "Debt collection": 3,
+  "Money Transfer": 4,
+  "Mortgage": 5,
+  "Other": 6,
+  "Payday or Personal Loan": 7,
+  "Student loan": 8,
+  "Vehicle loan or lease": 9
+}

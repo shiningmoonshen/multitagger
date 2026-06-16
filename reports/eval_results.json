@@ -1,0 +1,84 @@
+{
+  "test_size": 1700,
+  "accuracy": 0.7624,
+  "macro_f1": 0.6462,
+  "weighted_f1": 0.7685,
+  "per_class": {
+    "Bank Account": {
+      "precision": 0.8293,
+      "recall": 0.7234,
+      "f1-score": 0.7727,
+      "support": 188.0
+    },
+    "Credit Card": {
+      "precision": 0.6751,
+      "recall": 0.8026,
+      "f1-score": 0.7333,
+      "support": 233.0
+    },
+    "Credit Reporting": {
+      "precision": 0.8884,
+      "recall": 0.7686,
+      "f1-score": 0.8242,
+      "support": 497.0
+    },
+    "Debt collection": {
+      "precision": 0.7615,
+      "recall": 0.7795,
+      "f1-score": 0.7704,
+      "support": 381.0
+    },
+    "Money Transfer": {
+      "precision": 0.6512,
+      "recall": 0.8485,
+      "f1-score": 0.7368,
+      "support": 99.0
+    },
+    "Mortgage": {
+      "precision": 0.9217,
+      "recall": 0.7465,
+      "f1-score": 0.8249,
+      "support": 142.0
+    },
+    "Other": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1-score": 0.0,
+      "support": 5.0
+    },
+    "Payday or Personal Loan": {
+      "precision": 0.2375,
+      "recall": 0.4318,
+      "f1-score": 0.3065,
+      "support": 44.0
+    },
+    "Student loan": {
+      "precision": 0.8197,
+      "recall": 0.8333,
+      "f1-score": 0.8264,
+      "support": 60.0
+    },
+    "Vehicle loan or lease": {
+      "precision": 0.6481,
+      "recall": 0.6863,
+      "f1-score": 0.6667,
+      "support": 51.0
+    }
+  },
+  "low_confidence": {
+    "total": 393,
+    "pct": 23.12,
+    "per_class": {
+      "Bank Account": 48,
+      "Credit Card": 51,
+      "Credit Reporting": 127,
+      "Debt collection": 93,
+      "Money Transfer": 15,
+      "Payday or Personal Loan": 19,
+      "Mortgage": 25,
+      "Student loan": 3,
+      "Vehicle loan or lease": 10,
+      "Other": 2
+    }
+  }
+}

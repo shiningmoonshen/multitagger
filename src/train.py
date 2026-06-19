@@ -1,11 +1,15 @@
 import argparse
+import datetime
 import json
+import os
 import random
+import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import torch
+import wandb
 from datasets import Dataset
 from sklearn.metrics import accuracy_score, classification_report, f1_score
 from sklearn.utils.class_weight import compute_class_weight
@@ -14,6 +18,7 @@ from transformers import (
     AutoTokenizer,
     DataCollatorWithPadding,
     Trainer,
+    TrainerCallback,
     TrainingArguments,
 )
 
@@ -149,27 +154,84 @@ class WeightedTrainer(Trainer):
         return (loss, outputs) if return_outputs else loss
 
 
-def compute_metrics(eval_pred):
-    logits, labels = eval_pred
-    preds = np.argmax(logits, axis=-1)
-    return {
-        "f1_macro": f1_score(labels, preds, average="macro"),
-        "accuracy": accuracy_score(labels, preds),
-    }
+def make_compute_metrics(id2label: dict, num_labels: int):
+    def compute_metrics(eval_pred):
+        logits, labels = eval_pred
+        preds = np.argmax(logits, axis=-1)
+        macro_f1 = f1_score(labels, preds, average="macro", zero_division=0)
+        weighted_f1 = f1_score(labels, preds, average="weighted", zero_division=0)
+        per_class = f1_score(
+            labels, preds, average=None,
+            labels=list(range(num_labels)), zero_division=0,
+        )
+        if wandb.run is not None:
+            wandb.log({
+                "val/f1_per_class": {
+                    id2label[i]: float(per_class[i]) for i in range(num_labels)
+                }
+            })
+        return {
+            "f1_macro": macro_f1,
+            "f1_weighted": weighted_f1,
+            "accuracy": accuracy_score(labels, preds),
+        }
+    return compute_metrics
+
+
+class WandbMetricsCallback(TrainerCallback):
+    def on_log(self, args, state, control, logs=None, **kwargs):
+        if wandb.run is None or not logs:
+            return
+        metrics = {}
+        if "loss" in logs:
+            metrics["train/loss"] = logs["loss"]
+        if "eval_loss" in logs:
+            metrics["val/loss"] = logs["eval_loss"]
+        if "eval_f1_macro" in logs:
+            metrics["val/macro_f1"] = logs["eval_f1_macro"]
+        if "eval_f1_weighted" in logs:
+            metrics["val/weighted_f1"] = logs["eval_f1_weighted"]
+        if "epoch" in logs:
+            metrics["epoch"] = logs["epoch"]
+        if metrics:
+            wandb.log(metrics)
 
 
 def main():
+    if not os.environ.get("WANDB_API_KEY"):
+        print("ERROR: WANDB_API_KEY environment variable not set. Exiting.")
+        sys.exit(1)
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--smoke-test", action="store_true",
                         help="Quick sanity check: 200/100 rows, 20 steps.")
     args = parser.parse_args()
 
     train_df, val_df, label_map, num_labels = load_data()
+    id2label = {v: k for k, v in label_map.items()}
+    target_names = [id2label[i] for i in range(num_labels)]
 
     if args.smoke_test:
         print("\n[smoke-test] Subsampling: 200 train / 100 val, max_steps=20")
         train_df = train_df.sample(200, random_state=SEED)
         val_df = val_df.sample(100, random_state=SEED)
+
+    run_name = f"distilbert-run-{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    wandb.init(
+        project="multitagger",
+        name=run_name,
+        tags=["distilbert", "multiclass"],
+        config={
+            "model_checkpoint": BASE_MODEL_DIR,
+            "max_length": MAX_LENGTH,
+            "seed": SEED,
+            "learning_rate": 2e-5,
+            "batch_size_train": 8,
+            "batch_size_eval": 16,
+            "num_train_epochs": 3,
+            "notes": "data/processed/train.csv",
+        },
+    )
 
     class_weights = compute_class_weights(train_df, num_labels)
 
@@ -211,7 +273,8 @@ def main():
         train_dataset=train_ds,
         eval_dataset=val_ds,
         data_collator=data_collator,
-        compute_metrics=compute_metrics,
+        compute_metrics=make_compute_metrics(id2label, num_labels),
+        callbacks=[WandbMetricsCallback()],
     )
 
     print("\n" + "=" * 60)
@@ -236,6 +299,11 @@ def main():
     tokenizer.save_pretrained(str(FINAL_DIR))
     print(f"Saved to {FINAL_DIR}")
 
+    if wandb.run is not None:
+        artifact = wandb.Artifact("multitagger-distilbert", type="model")
+        artifact.add_dir(str(FINAL_DIR))
+        wandb.log_artifact(artifact)
+
     print("\n" + "=" * 60)
     print("Step 10: Standalone evaluation on val set")
     print("=" * 60)
@@ -243,13 +311,20 @@ def main():
     preds = np.argmax(pred_output.predictions, axis=-1)
     true_labels = val_df["label"].values
 
-    id2label = {v: k for k, v in label_map.items()}
-    target_names = [id2label[i] for i in range(num_labels)]
-
     print("\n=== Classification Report (Val Set — Session 2 Baseline) ===")
     print(classification_report(true_labels, preds, target_names=target_names))
+
+    if wandb.run is not None:
+        wandb.log({
+            "confusion_matrix": wandb.plot.confusion_matrix(
+                preds=preds.tolist(),
+                y_true=true_labels.tolist(),
+                class_names=target_names,
+            )
+        })
+
+    wandb.finish()
 
 
 if __name__ == "__main__":
     main()
-

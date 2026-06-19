@@ -1,3 +1,55 @@
+## Session 5 — W&B Integration — [06/18/2026]
+
+### Done
+- Added wandb dependency to requirements.txt
+- Instrumented train.py with W&B — wandb.init(), per-epoch metric logging,
+  per-class F1 logging with readable label names, confusion matrix, and
+  model artifact; wandb.finish() at close
+- WANDB_API_KEY handled via environment variable; script exits with warning
+  if key is not set
+- Training run completed and verified in W&B dashboard — all metrics
+  populated, artifact visible in Artifacts tab
+- F1 unchanged from Sprint 1 baseline, confirming instrumentation is
+  purely observational
+
+### Eval results
+No new eval run — F1 parity with Sprint 1 baseline confirmed via W&B dashboard.
+See Session 3 eval results.
+
+### Next session
+- Sprint 2, Day 3 — refer to sprint plan (Streamlit review tool)
+
+## Session 4 - Docker Setup - [06/17/2026]
+
+### Done
+- Download and installed Docker Desktop
+- Setup Docker, initiated build under 'multitagger'
+
+### Docker training run results:
+=== Training Summary ===
+Best epoch:     1.0
+Best eval loss: 0.9656
+Val macro F1:   0.6448
+
+=== Classification Report (Val Set — Session 2 Baseline) ===
+                         precision    recall  f1-score   support
+
+           Bank Account       0.69      0.76      0.72       189
+            Credit Card       0.74      0.77      0.76       233
+       Credit Reporting       0.89      0.76      0.82       496
+        Debt collection       0.77      0.76      0.77       381
+         Money Transfer       0.69      0.76      0.72        99
+               Mortgage       0.85      0.83      0.84       142
+                  Other       0.00      0.00      0.00         5
+Payday or Personal Loan       0.25      0.55      0.34        44
+           Student loan       0.85      0.87      0.86        61
+  Vehicle loan or lease       0.66      0.58      0.62        50
+
+               accuracy                           0.76      1700
+              macro avg       0.64      0.66      0.64      1700
+           weighted avg       0.78      0.76      0.77      1700
+
+
 ## Session 3 — Inference Wrapper + Eval Report — [06/16/2026]
 
 ### Done
@@ -25,6 +77,7 @@
 - Week 2 Sprint — refer to sprint plan
 - First task: Dockerize (Monday) — write Dockerfile, verify container
   reproduces same F1 scores as local run
+
 ## Session 2 - Training - [06/10/2026]
 
 ### Done

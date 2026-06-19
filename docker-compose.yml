@@ -3,5 +3,6 @@ services:
     build: .
     volumes:
       - ./data:/app/data
+      - ./models:/app/models
     environment:
       - PYTHONUNBUFFERED=1

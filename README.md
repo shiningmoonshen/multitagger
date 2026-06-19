@@ -49,3 +49,15 @@ docker compose run --rm trainer python src/predict.py
 ```bash
 docker compose run --rm trainer bash
 ```
+
+---
+
+## Review Tool
+
+Run the Streamlit review tool from the project root:
+
+```bash
+streamlit run src/app.py
+```
+
+Lets you paste a complaint narrative, see the predicted product category and confidence score, browse the last 20 predictions, and submit label overrides. Overrides are appended to `data/overrides.csv`.

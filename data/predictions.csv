@@ -1,0 +1,5 @@
+timestamp,narrative,predicted_label,confidence
+2026-06-22T22:38:49.034437+00:00,fjdklfjsdkfdljs,Payday or Personal Loan,0.2059
+2026-06-22T22:39:13.556497+00:00,?,Debt collection,0.1651
+2026-06-22T22:39:29.580745+00:00,3rd complaint,Debt collection,0.2423
+2026-06-22T22:39:46.354665+00:00,why would it have been 100% override rate at 1st query,Payday or Personal Loan,0.3982

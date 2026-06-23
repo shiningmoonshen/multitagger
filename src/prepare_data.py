@@ -1,3 +1,4 @@
+import argparse
 import json
 import re
 from pathlib import Path
@@ -35,39 +36,44 @@ def print_distribution(series: pd.Series, label: str) -> None:
         print(f"  {name}: {n:,}")
 
 
-def main() -> None:
-    PROCESSED.mkdir(parents=True, exist_ok=True)
+def main(raw_csv: Path | None = None, output_dir: Path | None = None, full: bool = False) -> None:
+    raw_csv = raw_csv or RAW_CSV
+    processed = output_dir or PROCESSED
+    processed.mkdir(parents=True, exist_ok=True)
 
     # ── Step 1: Load CSV in chunks, drop null narratives per-chunk ────────────
     print("Loading CSV …")
     chunks = []
-    for chunk in pd.read_csv(RAW_CSV, usecols=COLS, chunksize=100_000):
+    for chunk in pd.read_csv(raw_csv, usecols=COLS, chunksize=100_000):
         chunks.append(chunk.dropna(subset=["Consumer complaint narrative"]))
     df = pd.concat(chunks, ignore_index=True)
     print(f"After null-narrative filter: {len(df):,} rows x {len(df.columns)} columns")
     print_distribution(df["Product"], "Product distribution (full filtered dataset)")
 
     # ── Step 2: Subsample to ~25K ─────────────────────────────────────────────
-    print(f"\nSampling: Credit Reporting capped at {CR_CAP:,}, others proportional …")
+    if not full:
+        print(f"\nSampling: Credit Reporting capped at {CR_CAP:,}, others proportional …")
 
-    _CR_VARIANTS = {
-        "Credit reporting or other personal consumer reports",
-        "Credit reporting, credit repair services, or other personal consumer reports",
-        "Credit reporting",
-    }
-    cr_mask = df["Product"].isin(_CR_VARIANTS)
-    df_cr = df[cr_mask].sample(n=CR_CAP, random_state=SEED)
-    frac = SAMPLE_N / len(df)
-    df_other = (
-        df[~cr_mask]
-        .groupby("Product", group_keys=False)
-        .apply(lambda g: g.sample(frac=frac, random_state=SEED))
-    )
-    df = pd.concat([df_cr, df_other]).sample(frac=1, random_state=SEED).copy()
-    print(f"\nSample size: {len(df):,} rows")
-    print_distribution(df["Product"], "Product distribution AFTER sampling")
-    df.to_csv(PROCESSED / "sample_25k.csv", index=False)
-    print(f"Saved sample to {PROCESSED / 'sample_25k.csv'}")
+        _CR_VARIANTS = {
+            "Credit reporting or other personal consumer reports",
+            "Credit reporting, credit repair services, or other personal consumer reports",
+            "Credit reporting",
+        }
+        cr_mask = df["Product"].isin(_CR_VARIANTS)
+        df_cr = df[cr_mask].sample(n=CR_CAP, random_state=SEED)
+        frac = SAMPLE_N / len(df)
+        df_other = (
+            df[~cr_mask]
+            .groupby("Product", group_keys=False)
+            .apply(lambda g: g.sample(frac=frac, random_state=SEED))
+        )
+        df = pd.concat([df_cr, df_other]).sample(frac=1, random_state=SEED).copy()
+        print(f"\nSample size: {len(df):,} rows")
+        print_distribution(df["Product"], "Product distribution AFTER sampling")
+        df.to_csv(processed / "sample_25k.csv", index=False)
+        print(f"Saved sample to {processed / 'sample_25k.csv'}")
+    else:
+        print("\n[--full] Skipping sampling — processing entire dataset.")
 
     # ── Step 3: Clean narrative text (subsample only) ─────────────────────────
     print("\nCleaning narrative text …")
@@ -118,7 +124,7 @@ def main() -> None:
     # ── Step 6: Label encoder → label_map.json ────────────────────────────────
     sorted_names = sorted(df["label_name"].unique())
     label_map = {name: idx for idx, name in enumerate(sorted_names)}
-    map_path = PROCESSED / "label_map.json"
+    map_path = processed / "label_map.json"
     with open(map_path, "w", encoding="utf-8") as f:
         json.dump(label_map, f, indent=2, ensure_ascii=False)
     print(f"\nSaved label_map.json → {len(label_map)} classes: {map_path}")
@@ -139,7 +145,7 @@ def main() -> None:
     # ── Step 8: Save splits ───────────────────────────────────────────────────
     print("\nSaving splits …")
     for name, split in [("train", train), ("val", val), ("test", test)]:
-        out = PROCESSED / f"{name}.csv"
+        out = processed / f"{name}.csv"
         split.to_csv(out, index=False)
         print(f"  Saved {name}.csv: {len(split):,} rows → {out}")
 
@@ -187,4 +193,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--full", action="store_true", default=False,
+                        help="Process the entire dataset without sampling.")
+    args = parser.parse_args()
+    main(full=args.full)

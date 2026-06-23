@@ -47,12 +47,12 @@ def _print_distribution(series: pd.Series, label: str) -> None:
         print(f"  {name}: {n:,}")
 
 
-def load_data():
+def load_data(processed: Path):
     print("=" * 60)
     print("Step 1: Loading processed splits")
     print("=" * 60)
-    train_df = pd.read_csv(PROCESSED / "train.csv")
-    val_df = pd.read_csv(PROCESSED / "val.csv")
+    train_df = pd.read_csv(processed / "train.csv")
+    val_df = pd.read_csv(processed / "val.csv")
     print(f"Train shape: {train_df.shape}")
     print(f"Val shape:   {val_df.shape}")
     _print_distribution(train_df["label_name"], "TRAIN class distribution")
@@ -68,7 +68,7 @@ def load_data():
         if dropped:
             print(f"WARNING: dropped {dropped} empty/null text rows from {path}")
 
-    with open(PROCESSED / "label_map.json") as f:
+    with open(processed / "label_map.json") as f:
         label_map = json.load(f)
     num_labels = len(label_map)
     print(f"\nnum_labels: {num_labels}")
@@ -76,7 +76,7 @@ def load_data():
     return train_df, val_df, label_map, num_labels
 
 
-def build_datasets(train_df: pd.DataFrame, val_df: pd.DataFrame, tokenizer):
+def build_datasets(train_df: pd.DataFrame, val_df: pd.DataFrame, tokenizer, max_length: int):
     print("\n" + "=" * 60)
     print("Step 2: Building HuggingFace Datasets and tokenizing")
     print("=" * 60)
@@ -86,7 +86,7 @@ def build_datasets(train_df: pd.DataFrame, val_df: pd.DataFrame, tokenizer):
             batch["text"],
             truncation=True,
             padding=False,
-            max_length=MAX_LENGTH,
+            max_length=max_length,
         )
 
     train_ds = Dataset.from_pandas(train_df[["text", "label"]], preserve_index=False)
@@ -103,17 +103,18 @@ def build_datasets(train_df: pd.DataFrame, val_df: pd.DataFrame, tokenizer):
     return train_ds, val_ds
 
 
-def load_model(num_labels: int):
+def load_model(num_labels: int, base_model_dir: str):
     print("\n" + "=" * 60)
     print("Step 3: Loading model")
     print("=" * 60)
     try:
         model = AutoModelForSequenceClassification.from_pretrained(
-            BASE_MODEL_DIR, num_labels=num_labels, local_files_only=True
+            base_model_dir, num_labels=num_labels, local_files_only=True
         )
     except OSError:
         raise OSError(
-            "Base model not found locally. Run scripts/download_base_model.py once."
+            f"Base model not found locally at {base_model_dir}. "
+            "Run scripts/download_base_model.py once."
         )
     total = sum(p.numel() for p in model.parameters())
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -197,21 +198,45 @@ class WandbMetricsCallback(TrainerCallback):
             wandb.log(metrics)
 
 
-def main():
+def main(
+    processed_dir: Path | None = None,
+    model_dir: Path | None = None,
+    base_model_dir: str | None = None,
+    smoke_test: bool | None = None,
+    processed_artifact: str | None = None,
+    batch_size: int | None = None,
+    max_length: int | None = None,
+    num_epochs: int | None = None,
+):
     if not os.environ.get("WANDB_API_KEY"):
         print("ERROR: WANDB_API_KEY environment variable not set. Exiting.")
         sys.exit(1)
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--smoke-test", action="store_true",
-                        help="Quick sanity check: 200/100 rows, 20 steps.")
-    args = parser.parse_args()
+    if smoke_test is None or batch_size is None or max_length is None or num_epochs is None:
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--smoke-test", action="store_true",
+                            help="Quick sanity check: 200/100 rows, 20 steps.")
+        parser.add_argument("--batch-size", type=int, default=16)
+        parser.add_argument("--max-length", type=int, default=128)
+        parser.add_argument("--num-epochs", type=int, default=3)
+        args = parser.parse_args()
+        if smoke_test is None:
+            smoke_test = args.smoke_test
+        if batch_size is None:
+            batch_size = args.batch_size
+        if max_length is None:
+            max_length = args.max_length
+        if num_epochs is None:
+            num_epochs = args.num_epochs
 
-    train_df, val_df, label_map, num_labels = load_data()
+    processed = processed_dir or PROCESSED
+    base_model = base_model_dir or BASE_MODEL_DIR
+
+    train_df, val_df, label_map, num_labels = load_data(processed)
     id2label = {v: k for k, v in label_map.items()}
     target_names = [id2label[i] for i in range(num_labels)]
 
-    if args.smoke_test:
+    if smoke_test:
         print("\n[smoke-test] Subsampling: 200 train / 100 val, max_steps=20")
         train_df = train_df.sample(200, random_state=SEED)
         val_df = val_df.sample(100, random_state=SEED)
@@ -222,38 +247,45 @@ def main():
         name=run_name,
         tags=["distilbert", "multiclass"],
         config={
-            "model_checkpoint": BASE_MODEL_DIR,
-            "max_length": MAX_LENGTH,
+            "model_checkpoint": base_model,
+            "max_length": max_length,
             "seed": SEED,
             "learning_rate": 2e-5,
-            "batch_size_train": 8,
-            "batch_size_eval": 16,
-            "num_train_epochs": 3,
-            "notes": "data/processed/train.csv",
+            "batch_size_train": batch_size,
+            "batch_size_eval": batch_size,
+            "num_train_epochs": num_epochs,
+            "notes": str(processed / "train.csv"),
         },
     )
+
+    if processed_artifact:
+        wandb.run.use_artifact(processed_artifact)
+
+    if model_dir is None:
+        model_dir = Path("models") / f"distilbert-{wandb.run.id}"
+    final_dir = model_dir / "final"
 
     class_weights = compute_class_weights(train_df, num_labels)
 
     print("\n" + "=" * 60)
     print("Loading tokenizer")
     print("=" * 60)
-    tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL_DIR, local_files_only=True)
+    tokenizer = AutoTokenizer.from_pretrained(base_model, local_files_only=True)
 
-    train_ds, val_ds = build_datasets(train_df, val_df, tokenizer)
+    train_ds, val_ds = build_datasets(train_df, val_df, tokenizer, max_length)
     data_collator = DataCollatorWithPadding(tokenizer)
 
-    model = load_model(num_labels)
+    model = load_model(num_labels, base_model)
 
     print("\n" + "=" * 60)
     print("Step 5-7: Configuring training")
     print("=" * 60)
-    MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    model_dir.mkdir(parents=True, exist_ok=True)
     training_args = TrainingArguments(
-        output_dir=str(MODEL_DIR),
-        num_train_epochs=3,
-        per_device_train_batch_size=8,
-        per_device_eval_batch_size=16,
+        output_dir=str(model_dir),
+        num_train_epochs=num_epochs,
+        per_device_train_batch_size=batch_size,
+        per_device_eval_batch_size=batch_size,
         eval_strategy="epoch",
         save_strategy="epoch",
         load_best_model_at_end=True,
@@ -262,7 +294,7 @@ def main():
         report_to="none",
     )
 
-    if args.smoke_test:
+    if smoke_test:
         training_args.max_steps = 20
         training_args.output_dir = "models/smoke-test"
 
@@ -294,14 +326,14 @@ def main():
     print("\n" + "=" * 60)
     print("Step 9: Saving model and tokenizer")
     print("=" * 60)
-    FINAL_DIR.mkdir(parents=True, exist_ok=True)
-    trainer.save_model(str(FINAL_DIR))
-    tokenizer.save_pretrained(str(FINAL_DIR))
-    print(f"Saved to {FINAL_DIR}")
+    final_dir.mkdir(parents=True, exist_ok=True)
+    trainer.save_model(str(final_dir))
+    tokenizer.save_pretrained(str(final_dir))
+    print(f"Saved to {final_dir}")
 
     if wandb.run is not None:
         artifact = wandb.Artifact("multitagger-distilbert", type="model")
-        artifact.add_dir(str(FINAL_DIR))
+        artifact.add_dir(str(final_dir))
         wandb.log_artifact(artifact)
 
     print("\n" + "=" * 60)

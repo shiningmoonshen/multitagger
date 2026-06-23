@@ -1,3 +1,45 @@
+## Session 6 — Streamlit Wiring, Modal Integration, End-to-End Test — [06/22/2026]
+
+### Done
+- Revised Sprint 2 Day 3 brief: introduced `data/predictions.csv` as a
+  full inference log to provide denominator for override rate and
+  low-confidence count; `data/overrides.csv` confirmed as corrections-only
+  (no empty rows)
+- Sprint 2 Day 3 implemented: summary stats panel, confidence filter slider,
+  low-confidence queue tab; `overridden` column derived by joining predictions
+  to overrides on narrative text
+- Designed Modal integration as Sprint 2 Day 4: `prepare_modal.py` (CPU,
+  16GB RAM) and `train_modal.py` (T4 GPU) with W&B Artifacts as data
+  persistence layer for full lineage: `cfpb-complaints-raw` →
+  `cfpb-complaints-processed` → model artifact
+- Added `--full` flag to `prepare_data.py` and `prepare_modal.py` to toggle
+  between ~47k sample and full dataset
+- Added `--resume-from` CLI flag to `train_modal.py` to optionally start
+  from a prior fine-tuned W&B artifact instead of baked base weights
+- Fixed `modal.Mount` AttributeError — replaced with current Modal API for
+  local file access
+- Fixed classifier head size mismatch — `_download_base_model()` changed to
+  use `AutoModel` (not `AutoModelForSequenceClassification`) so baked weights
+  are backbone-only; classifier head initialized fresh by `train.py` with
+  correct `num_labels` at runtime
+- Increased Modal training parameters for GPU: batch size 16 → 64,
+  max_length 128 → 256
+- Decided against full dataset training run — 47k sample baseline (0.769
+  weighted F1) is sufficient for portfolio/interview purposes; all target
+  tools and pipeline stages are integrated
+- Sprint 2 Day 5 completed: end-to-end test passed, README written
+- `scripts/upload_raw_data.py` is a one-time script — re-running creates
+  spurious artifact versions in W&B; noted in README
+
+### Eval results
+No new eval run. Baseline remains 0.769 weighted F1 from Sprint 1 sample run.
+Full dataset training deferred — not required for project goals.
+
+### Next session
+- Sprint 3 options: Airflow DAG for scheduled retraining, Evidently drift
+  monitoring, closing the feedback loop from overrides back into training data
+- Interview prep when ready
+
 ## Session 5 — W&B Integration — [06/18/2026]
 
 ### Done

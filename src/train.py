@@ -207,18 +207,20 @@ def main(
     batch_size: int | None = None,
     max_length: int | None = None,
     num_epochs: int | None = None,
+    learning_rate: float | None = None,
 ):
     if not os.environ.get("WANDB_API_KEY"):
         print("ERROR: WANDB_API_KEY environment variable not set. Exiting.")
         sys.exit(1)
 
-    if smoke_test is None or batch_size is None or max_length is None or num_epochs is None:
+    if smoke_test is None or batch_size is None or max_length is None or num_epochs is None or learning_rate is None:
         parser = argparse.ArgumentParser()
         parser.add_argument("--smoke-test", action="store_true",
                             help="Quick sanity check: 200/100 rows, 20 steps.")
         parser.add_argument("--batch-size", type=int, default=16)
         parser.add_argument("--max-length", type=int, default=128)
         parser.add_argument("--num-epochs", type=int, default=3)
+        parser.add_argument("--learning-rate", type=float, default=2e-5)
         args = parser.parse_args()
         if smoke_test is None:
             smoke_test = args.smoke_test
@@ -228,6 +230,8 @@ def main(
             max_length = args.max_length
         if num_epochs is None:
             num_epochs = args.num_epochs
+        if learning_rate is None:
+            learning_rate = args.learning_rate
 
     processed = processed_dir or PROCESSED
     base_model = base_model_dir or BASE_MODEL_DIR
@@ -250,7 +254,7 @@ def main(
             "model_checkpoint": base_model,
             "max_length": max_length,
             "seed": SEED,
-            "learning_rate": 2e-5,
+            "learning_rate": learning_rate,
             "batch_size_train": batch_size,
             "batch_size_eval": batch_size,
             "num_train_epochs": num_epochs,
@@ -284,6 +288,7 @@ def main(
     training_args = TrainingArguments(
         output_dir=str(model_dir),
         num_train_epochs=num_epochs,
+        learning_rate=learning_rate,
         per_device_train_batch_size=batch_size,
         per_device_eval_batch_size=batch_size,
         eval_strategy="epoch",

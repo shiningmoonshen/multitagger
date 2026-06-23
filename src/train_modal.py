@@ -43,9 +43,16 @@ train_image = (
     memory=16384,
     timeout=7200,
 )
-def run_training(resume_from: str | None = None, batch_size: int = 64, max_length: int = 256):
+def run_training(
+    resume_from: str | None = None,
+    batch_size: int = 64,
+    max_length: int = 256,
+    sweep: bool = False,
+    sweep_id: str = "",
+    count: int = 1,
+):
     sys.path.insert(0, "/root")
-    import train
+    import train as train_module
     import wandb
 
     api = wandb.Api()
@@ -59,15 +66,33 @@ def run_training(resume_from: str | None = None, batch_size: int = 64, max_lengt
     data_artifact = api.artifact("multitagger/cfpb-complaints-processed:latest")
     data_dir = Path(data_artifact.download())
 
-    train.main(
-        processed_dir=data_dir,
-        model_dir=None,
-        base_model_dir=base_model_dir,
-        smoke_test=False,
-        processed_artifact="multitagger/cfpb-complaints-processed:latest",
-        batch_size=batch_size,
-        max_length=max_length,
-    )
+    if sweep:
+        def train():
+            wandb.init(project="multitagger")
+            cfg = wandb.config
+            train_module.main(
+                processed_dir=data_dir,
+                model_dir=None,
+                base_model_dir=base_model_dir,
+                smoke_test=False,
+                processed_artifact="multitagger/cfpb-complaints-processed:latest",
+                batch_size=cfg.per_device_train_batch_size,
+                max_length=max_length,
+                num_epochs=cfg.num_train_epochs,
+                learning_rate=cfg.learning_rate,
+            )
+
+        wandb.agent(sweep_id, train, count=count)
+    else:
+        train_module.main(
+            processed_dir=data_dir,
+            model_dir=None,
+            base_model_dir=base_model_dir,
+            smoke_test=False,
+            processed_artifact="multitagger/cfpb-complaints-processed:latest",
+            batch_size=batch_size,
+            max_length=max_length,
+        )
 
 
 @app.local_entrypoint()
@@ -75,9 +100,15 @@ def main(
     resume_from: str = "",
     batch_size: int = 64,
     max_length: int = 256,
+    sweep: bool = False,
+    sweep_id: str = "",
+    count: int = 1,
 ):
     run_training.remote(
         resume_from=resume_from or None,
         batch_size=batch_size,
         max_length=max_length,
+        sweep=sweep,
+        sweep_id=sweep_id,
+        count=count,
     )
